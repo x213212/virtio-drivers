@@ -21,3 +21,4 @@ VirtIO guest drivers in Rust. For **no_std** environment.
 * x86_64 (TODO)
 
 * [RISCV](./examples/riscv)
+* add c & rust call 
