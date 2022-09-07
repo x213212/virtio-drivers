@@ -2,6 +2,7 @@
 #![no_main]
 #![deny(warnings)]
 
+
 extern crate alloc;
 extern crate opensbi_rt;
 
@@ -12,17 +13,34 @@ use log::{info, warn, LevelFilter};
 use virtio_drivers::*;
 use virtio_impl::HalImpl;
 
+extern {
+    fn double_input(input: i32) -> i32;
+}
+
+
+#[no_mangle]
+pub extern "C" fn test() {
+    info!("hello c call rust");
+    log::set_max_level(LevelFilter::Info);
+    init_dt2(2264924160);
+    info!("test end");
+    
+}
 mod virtio_impl;
 
 #[no_mangle]
-extern "C" fn main(_hartid: usize, device_tree_paddr: usize) {
+extern "C" fn main2(_hartid: usize, device_tree_paddr: usize) {
     log::set_max_level(LevelFilter::Info);
     init_dt(device_tree_paddr);
     info!("test end");
+    let input = 4;
+    let output = unsafe { double_input(input) };
+    info!("hello rust call @ {:#x}", output);
+    loop{};
 }
 
 fn init_dt(dtb: usize) {
-    info!("device tree @ {:#x}", dtb);
+    info!("device tree @ {:?}", dtb);
     #[repr(C)]
     struct DtbHeader {
         be_magic: u32,
@@ -37,6 +55,22 @@ fn init_dt(dtb: usize) {
     let dt = DeviceTree::load(dtb_data).expect("failed to parse device tree");
     walk_dt_node(&dt.root);
 }
+fn init_dt2(dtb: usize) {
+    info!("device tree @ {:?}", dtb);
+    #[repr(C)]
+    struct DtbHeader {
+        be_magic: u32,
+        be_size: u32,
+    }
+    let header = unsafe { &*(dtb as *const DtbHeader) };
+    let magic = u32::from_be(header.be_magic);
+    const DEVICE_TREE_MAGIC: u32 = 0xd00dfeed;
+    assert_eq!(magic, DEVICE_TREE_MAGIC);
+    let size = u32::from_be(header.be_size);
+    let dtb_data = unsafe { core::slice::from_raw_parts(dtb as *const u8, size as usize) };
+    let dt = DeviceTree::load(dtb_data).expect("failed to parse device tree");
+    walk_dt_node2(&dt.root);
+}
 
 fn walk_dt_node(dt: &Node) {
     if let Ok(compatible) = dt.prop_str("compatible") {
@@ -46,6 +80,17 @@ fn walk_dt_node(dt: &Node) {
     }
     for child in dt.children.iter() {
         walk_dt_node(child);
+    }
+}
+
+fn walk_dt_node2(dt: &Node) {
+    if let Ok(compatible) = dt.prop_str("compatible") {
+        if compatible == "virtio,mmio" {
+            virtio_probe2(dt);
+        }
+    }
+    for child in dt.children.iter() {
+        walk_dt_node2(child);
     }
 }
 
@@ -72,6 +117,25 @@ fn virtio_probe(node: &Node) {
     }
 }
 
+fn virtio_probe2(node: &Node) {
+    if let Some(reg) = node.prop_raw("reg") {
+        let paddr = reg.as_slice().read_be_u64(0).unwrap();
+        let size = reg.as_slice().read_be_u64(8).unwrap();
+        let vaddr = paddr;
+        info!("walk dt addr={:#x}, size={:#x}", paddr, size);
+        let header = unsafe { &mut *(vaddr as *mut VirtIOHeader) };
+        info!(
+            "Detected virtio device with vendor id {:#X}, device type {:?}",
+            header.vendor_id(),
+            header.device_type(),
+        );
+        info!("Device tree node {:?}", node);
+        match header.device_type() {
+            DeviceType::GPU => virtio_gpu2(header),
+            t => warn!("Unrecognized virtio device: {:?}", t),
+        }
+    }
+}
 fn virtio_blk(header: &'static mut VirtIOHeader) {
     let mut blk = VirtIOBlk::<HalImpl>::new(header).expect("failed to create blk driver");
     let mut input = vec![0xffu8; 512];
@@ -88,6 +152,7 @@ fn virtio_blk(header: &'static mut VirtIOHeader) {
 }
 
 fn virtio_gpu(header: &'static mut VirtIOHeader) {
+
     let mut gpu = VirtIOGpu::<HalImpl>::new(header).expect("failed to create gpu driver");
     let fb = gpu.setup_framebuffer().expect("failed to get fb");
     for y in 0..768 {
@@ -101,7 +166,22 @@ fn virtio_gpu(header: &'static mut VirtIOHeader) {
     gpu.flush().expect("failed to flush");
     info!("virtio-gpu test finished");
 }
+fn virtio_gpu2(header: &'static mut VirtIOHeader) {
 
+    let mut gpu = VirtIOGpu::<HalImpl>::new(header).expect("failed to create gpu driver");
+    let fb = gpu.setup_framebuffer().expect("failed to get fb");
+    for y in 0..768 {
+        for x in 0..1024 {
+            let idx = (y * 1024 + x) * 4;
+            fb[idx] = x as u8;
+            fb[idx + 1] = y as u8;
+            fb[idx + 2] = (x + y) as u8;
+        }
+    }
+    gpu.flush().expect("failed to flush");
+
+    info!("virtio-gpu test finished");
+}
 fn virtio_input(header: &'static mut VirtIOHeader) {
     //let mut event_buf = [0u64; 32];
     let mut _input = VirtIOInput::<HalImpl>::new(header).expect("failed to create input driver");

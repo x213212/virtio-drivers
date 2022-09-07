@@ -3,6 +3,7 @@ pub mod fake;
 
 use super::*;
 use core::marker::PhantomData;
+use log::*;
 
 /// A virtual memory address in the address space of the program.
 pub type VirtAddr = usize;
@@ -24,13 +25,17 @@ impl<H: Hal> DMA<H> {
         if paddr == 0 {
             return Err(Error::DmaError);
         }
+         info!("===================================================");
+         info!("alloc addres {:?}", paddr);
         Ok(DMA {
             paddr,
             pages,
             _phantom: PhantomData::default(),
         })
     }
-
+    pub fn new2()  {
+      
+    }
     pub fn paddr(&self) -> usize {
         self.paddr
     }

@@ -5,6 +5,7 @@ use core::{fmt, hint::spin_loop};
 use log::*;
 use volatile::{ReadOnly, Volatile, WriteOnly};
 
+
 /// A virtio based graphics adapter.
 ///
 /// It can operate in 2D mode and in 3D (virgl) mode.
@@ -12,6 +13,7 @@ use volatile::{ReadOnly, Volatile, WriteOnly};
 /// a gpu with 3D support on the host machine.
 /// In 2D mode the virtio-gpu device provides support for ARGB Hardware cursors
 /// and multiple scanouts (aka heads).
+
 pub struct VirtIOGpu<'a, H: Hal> {
     header: &'static mut VirtIOHeader,
     rect: Rect,
@@ -35,6 +37,42 @@ impl<H: Hal> VirtIOGpu<'_, H> {
     /// Create a new VirtIO-Gpu driver.
     pub fn new(header: &'static mut VirtIOHeader) -> Result<Self> {
         header.begin_init(|features| {
+            let features = Features::from_bits_truncate(features);
+            info!("Device features {:?}", features);
+            let supported_features = Features::empty();
+            (features & supported_features).bits()
+        });
+
+        // read configuration space
+        let config = unsafe { &mut *(header.config_space() as *mut Config) };
+        info!("Config: {:?}", config);
+
+        let control_queue = VirtQueue::new(header, QUEUE_TRANSMIT, 2)?;
+        let cursor_queue = VirtQueue::new(header, QUEUE_CURSOR, 2)?;
+
+        let queue_buf_dma = DMA::new(2)?;
+        let queue_buf_send = unsafe { &mut queue_buf_dma.as_buf()[..PAGE_SIZE] };
+        let queue_buf_recv = unsafe { &mut queue_buf_dma.as_buf()[PAGE_SIZE..] };
+
+        header.finish_init();
+
+        Ok(VirtIOGpu {
+            header,
+            frame_buffer_dma: None,
+            cursor_buffer_dma: None,
+            rect: Rect::default(),
+            control_queue,
+            cursor_queue,
+            queue_buf_dma,
+            queue_buf_send,
+            queue_buf_recv,
+        })
+    }
+    pub fn new2(){
+     	info!("init");
+    }
+    pub fn get(header: &'static mut VirtIOHeader) -> Result<Self> {
+       header.begin_init(|features| {
             let features = Features::from_bits_truncate(features);
             info!("Device features {:?}", features);
             let supported_features = Features::empty();
